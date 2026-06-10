@@ -288,11 +288,14 @@ function App(){
   const [moreOpen,setMoreOpen]=useState(false);
   const skipPush=useRef(false); const syncTimer=useRef(null); const firstData=useRef(true);
   const stamp=()=>new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+  const looksEmpty=x=>!x || !(((x.projects||[]).length)||((x.habits||[]).length)||((x.ideas||[]).length)||Object.keys(x.doneLog||{}).length);
   const fullSync=async cfg=>{
     try{
       setSyncState({s:'syncing',msg:''});
       const remote=await gistPull(cfg);
-      if(remote && (remote.updatedAt||0)>(dataRef.current.updatedAt||0)){ skipPush.current=true; setData(remote); }
+      const remoteNewer=remote && (remote.updatedAt||0)>(dataRef.current.updatedAt||0);
+      // Schutz: eine leere Cloud darf lokale Inhalte niemals überschreiben
+      if(remoteNewer && !(looksEmpty(remote) && !looksEmpty(dataRef.current))){ skipPush.current=true; setData(remote); }
       else { await gistPush(cfg,dataRef.current); }
       setSyncState({s:'ok',msg:stamp()});
     }catch(e){ setSyncState({s:'error',msg:String(e.message||e)}); }
@@ -354,16 +357,16 @@ function App(){
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
     a.download=`life-os-backup-${todayKey()}.json`; a.click();
   };
-  const exportData=()=>{ const now=Date.now(); downloadBackup({...data,lastBackup:now}); update(d=>{d.lastBackup=now;}); };
-  // Auto-Backup: einmal pro Woche automatisch herunterladen
+  const exportData=()=>{ const now=Date.now(); downloadBackup({...data,lastBackup:now}); setData(d=>({...d,lastBackup:now})); };
+  // Auto-Backup: einmal pro Woche automatisch herunterladen (stempelt bewusst KEIN updatedAt — Housekeeping darf leere Daten nicht "neuer" machen)
   useEffect(()=>{
     if(daysSince(data.lastAutoBackup) < 7) return;
-    const t=setTimeout(()=>{ const now=Date.now(); downloadBackup({...data,lastAutoBackup:now,lastBackup:now}); update(d=>{d.lastAutoBackup=now; d.lastBackup=now;}); }, 1800);
+    const t=setTimeout(()=>{ const now=Date.now(); downloadBackup({...data,lastAutoBackup:now,lastBackup:now}); setData(d=>({...d,lastAutoBackup:now,lastBackup:now})); }, 1800);
     return ()=>clearTimeout(t);
   },[]);
   const importData=e=>{
     const f=e.target.files[0]; if(!f) return;
-    const r=new FileReader(); r.onload=()=>{ try{ setData(JSON.parse(r.result)); }catch(x){ alert('Datei nicht lesbar'); } }; r.readAsText(f);
+    const r=new FileReader(); r.onload=()=>{ try{ const obj=JSON.parse(r.result); obj.updatedAt=Date.now(); setData(obj); }catch(x){ alert('Datei nicht lesbar'); } }; r.readAsText(f);
   };
 
   return <div className="md:flex min-h-screen">
