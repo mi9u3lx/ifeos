@@ -184,7 +184,7 @@ const projWeek = p => { const wk=weekKey(); const legacy=(p.time&&p.time[wk])||0
 const areaWeekSecs = (projects,area) => projects.filter(p=>p.area===area).reduce((s,p)=>s+projWeek(p),0);
 const areaDaySecs = (projects,area,dk) => projects.filter(p=>p.area===area).reduce((s,p)=>s+projDay(p,dk),0);
 const goalH = (data,area,kind) => (data.goals&&data.goals[area]&&data.goals[area][kind])||0;
-function ensureGoals(d){ if(!d.goals)d.goals={}; if(!d.goals.uni)d.goals.uni={day:4,week:20}; if(!d.goals.sidehustle)d.goals.sidehustle={day:2,week:12}; }
+function ensureGoals(d){ if(!d.goals)d.goals={}; if(!d.goals.uni)d.goals.uni={day:4,week:20}; if(!d.goals.sidehustle)d.goals.sidehustle={day:2,week:12}; if(!d.goals.leben)d.goals.leben={day:1,week:6}; if(!d.goals.screen)d.goals.screen={week:14,day:2}; if(d.goals.screen.day==null)d.goals.screen.day=2; if(d.goals.screen.week==null)d.goals.screen.week=14; }
 const daysSince = ts => ts ? (Date.now()-ts)/86400000 : Infinity;
 function prioOrderedIds(d){
   const all=(d.projects||[]).flatMap(p=>p.todos.filter(t=>!t.done&&(t.prio||0)>0).map(t=>t.id));
@@ -243,6 +243,7 @@ function loadData(){
   if(!Array.isArray(d.countdowns)) d.countdowns=[];
   if(!d.bigThing || typeof d.bigThing!=='object' || Array.isArray(d.bigThing)) d.bigThing={};
   if(!d.doneLog || typeof d.doneLog!=='object' || Array.isArray(d.doneLog)) d.doneLog={};
+  if(!d.screenTime || typeof d.screenTime!=='object' || Array.isArray(d.screenTime)) d.screenTime={};
   if(!d.ui || typeof d.ui!=='object') d.ui={};
   if(!d.ui.collapsed || typeof d.ui.collapsed!=='object') d.ui.collapsed={};
   ensureGoals(d);
@@ -737,12 +738,72 @@ function WeekGraph({data,update,activeProject,runningSecs}){
   </Collapse>;
 }
 
+/* ---------- Fokus: Produktiv vs. Handy (Woche) ---------- */
+function FokusWeek({data,update,prodWeekSecs,prodTodaySecs}){
+  const tk=todayKey();
+  const wkDays=(()=>{ const m=new Date(); m.setHours(0,0,0,0); m.setDate(m.getDate()-((m.getDay()+6)%7)); return [...Array(7)].map((_,i)=>{ const d=new Date(m); d.setDate(m.getDate()+i); return todayKey(d); }); })();
+  const mode=(data.ui&&data.ui.fokusMode)==='today'?'today':'week';
+  const isToday=mode==='today';
+  const setMode=m=>update(d=>{ if(!d.ui||typeof d.ui!=='object')d.ui={}; d.ui.fokusMode=m; });
+  const st=data.screenTime||{};
+  const screenWk=isToday ? (+st[tk]||0) : wkDays.reduce((a,k)=>a+(+st[k]||0),0);
+  const prodSecs=isToday ? (prodTodaySecs||0) : (prodWeekSecs||0); const prodH=prodSecs/3600;
+  const sg=(data.goals&&data.goals.screen)||{};
+  const limit=isToday ? (+sg.day||0) : (+sg.week||0);
+  const over=limit>0 && screenWk>limit;
+  const prodWins=prodH>=screenWk;
+  const lbl=isToday?'heute':'diese Woche';
+  const todayVal=st[tk];
+  const [v,setV]=useState(todayVal!=null?String(todayVal):'');
+  useEffect(()=>{ setV(todayVal!=null?String(todayVal):''); },[todayVal]);
+  const save=()=>{ const h=parseFloat(v); update(d=>{ if(!d.screenTime)d.screenTime={}; if(v===''||isNaN(h)) delete d.screenTime[tk]; else d.screenTime[tk]=Math.max(0,h); }); };
+  const setLimit=()=>{ const cur=isToday?(+sg.day||2):(+sg.week||14); const n=prompt('Handy-Limit '+(isToday?'pro Tag':'pro Woche')+' (Stunden)?', cur); if(n===null)return; const x=parseFloat(n); update(d=>{ ensureGoals(d); if(isToday) d.goals.screen.day=isNaN(x)?0:Math.max(0,x); else d.goals.screen.week=isNaN(x)?0:Math.max(0,x); }); };
+  return <Card>
+    <div className="flex items-center justify-between mb-3 gap-2">
+      <div className="text-sm text-zinc-400 shrink-0">🪞 Fokus</div>
+      <div className="flex items-center gap-1 ml-auto">
+        <div className="flex bg-zinc-800/60 rounded-lg p-0.5 text-xs">
+          {[['week','Woche'],['today','Heute']].map(([m,l])=><button key={m} onClick={()=>setMode(m)} className={`px-2.5 py-1 rounded-md ${mode===m?'bg-amber-500 text-black font-semibold':'text-zinc-400 hover:text-zinc-200'}`}>{l}</button>)}
+        </div>
+        <button onClick={setLimit} className="text-[10px] text-zinc-600 hover:text-zinc-400 ml-1">Limit ⚙</button>
+      </div>
+    </div>
+    <div className="grid grid-cols-2 gap-3 mb-3">
+      <div className="rounded-xl bg-zinc-800/40 p-3">
+        <div className="text-[11px] text-zinc-400">🎯 Produktiv <span className="text-zinc-600">· Uni+Side</span></div>
+        <div className="text-3xl font-bold tabular-nums text-emerald-400">{fmtHrs(prodSecs)}</div>
+        <div className="text-[10px] text-zinc-600">{lbl}</div>
+      </div>
+      <div className="rounded-xl bg-zinc-800/40 p-3">
+        <div className="text-[11px] text-zinc-400">📱 Handy</div>
+        <div className={`text-3xl font-bold tabular-nums ${over?'text-red-400':'text-sky-300'}`}>{screenWk.toFixed(1)}h</div>
+        <div className="text-[10px] text-zinc-600">{lbl}</div>
+      </div>
+    </div>
+    <div className={`text-xs rounded-lg px-3 py-2 mb-3 ${(screenWk===0&&prodSecs===0)?'bg-zinc-800/50 text-zinc-500':prodWins?'bg-emerald-500/10 text-emerald-300':'bg-red-500/10 text-red-300'}`}>
+      {(screenWk===0&&prodSecs===0) ? ('⚪ Noch nichts erfasst '+lbl+'.') : prodWins ? '🟢 Mehr produktiv als am Handy — stark, dranbleiben!' : `🔴 ${(screenWk-prodH).toFixed(1)}h mehr am Handy als produktiv.`}
+    </div>
+    {limit>0 && <div className="mb-3">
+      <div className="flex justify-between text-[10px] text-zinc-500 mb-1"><span>Handy-Limit {isToday?'/Tag':'/Woche'}</span><span className="tabular-nums">{screenWk.toFixed(1)} / {limit}h{over&&<span className="text-red-400"> · drüber!</span>}</span></div>
+      <div className="h-2.5 bg-zinc-800 rounded-full overflow-hidden"><div className={`h-full rounded-full bar-fill ${over?'bg-gradient-to-r from-red-500 to-orange-500':'bg-gradient-to-r from-sky-500 to-indigo-500'}`} style={{width:`${Math.min(100,limit>0?Math.round(screenWk/limit*100):0)}%`}}/></div>
+    </div>}
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-zinc-400 shrink-0">📱 heute:</span>
+      <input type="number" step="0.1" min="0" value={v} onChange={e=>setV(e.target.value)} placeholder="z.B. 3.5" className="w-20 bg-zinc-800 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-amber-500"/>
+      <span className="text-xs text-zinc-500">h</span>
+      <button onClick={save} className="text-xs bg-amber-500 text-black font-semibold rounded-lg px-3 py-1.5 hover:bg-amber-400">{todayVal!=null?'Ändern':'Speichern'}</button>
+      {todayVal!=null && <span className="text-[10px] text-zinc-600 ml-auto">heute {todayVal}h</span>}
+    </div>
+  </Card>;
+}
+
 function Today({data,update,go,activeProject,runningSecs,stopTimer,cheer}){
   const tk=todayKey(); const wk=weekKey();
   const sleep=data.sleep[tk];
   const weekTotal=data.projects.reduce((a,p)=>a+projWeek(p),0);
   const liveAdd=a=>activeProject&&activeProject.area===a?runningSecs:0;
-  const uniWk=areaWeekSecs(data.projects,'uni')+liveAdd('uni'); const sideWk=areaWeekSecs(data.projects,'sidehustle')+liveAdd('sidehustle');
+  const uniWk=areaWeekSecs(data.projects,'uni')+liveAdd('uni'); const sideWk=areaWeekSecs(data.projects,'sidehustle')+liveAdd('sidehustle'); const lebenWk=areaWeekSecs(data.projects,'leben')+liveAdd('leben');
+  const areaDay=a=>(data.projects||[]).filter(p=>p.area===a).reduce((s,p)=>s+((p.days||{})[tk]||0),0)+liveAdd(a); const prodTodaySecs=areaDay('uni')+areaDay('sidehustle');
   const openTodos=data.projects.flatMap(p=>p.todos.filter(t=>!t.done).map(t=>({p,t})));
   const [focusMode,setFocusMode]=useState('prio');
   const byTodoId={}; openTodos.forEach(x=>{byTodoId[x.t.id]=x;});
@@ -815,7 +876,7 @@ function Today({data,update,go,activeProject,runningSecs,stopTimer,cheer}){
           <div className="text-2xl font-bold tabular-nums">{fmtHrs(weekTotal+(activeProject?runningSecs:0))}</div>
         </div>
         <div className="space-y-3">
-          {[['uni','🎓','Uni',uniWk,'from-indigo-500 to-violet-500'],['sidehustle','🚀','Side',sideWk,'from-amber-500 to-orange-500']].map(([a,em,lb,secs,grad])=>{
+          {[['uni','🎓','Uni',uniWk,'from-indigo-500 to-violet-500'],['sidehustle','🚀','Side',sideWk,'from-amber-500 to-orange-500'],['leben','🗂️','Leben',lebenWk,'from-zinc-500 to-zinc-400']].map(([a,em,lb,secs,grad])=>{
             const goal=goalH(data,a,'week')*3600; const pct=goal>0?Math.min(100,Math.round(secs/goal*100)):(secs>0?100:0); const over=goal>0&&secs>=goal;
             return <div key={a}>
               <div className="flex items-center gap-2 mb-1">
@@ -826,15 +887,12 @@ function Today({data,update,go,activeProject,runningSecs,stopTimer,cheer}){
               <div className="h-2.5 bg-zinc-800/80 rounded-full overflow-hidden"><div className={`bar-fill h-full rounded-full bg-gradient-to-r ${over?'from-emerald-500 to-emerald-400':grad}`} style={{width:`${pct}%`}}/></div>
             </div>;
           })}
-          {(()=>{ const lebenWk=areaWeekSecs(data.projects,'leben')+liveAdd('leben'); return lebenWk>0 ? <div className="flex items-center gap-2 pt-0.5">
-            <span className="text-sm shrink-0 emo">🗂️</span>
-            <span className="text-xs text-zinc-400 flex-1">Leben</span>
-            <span className="text-xs tabular-nums text-zinc-300">{fmtHrs(lebenWk)}</span>
-          </div> : null; })()}
         </div>
         {activeProject && <div className="mt-3 text-xs text-amber-400 flex items-center gap-1"><span>▶ {activeProject.emoji}</span><span className="truncate">{activeProject.name}</span><span className="tabular-nums shrink-0">· {fmtDur(runningSecs)}</span></div>}
       </Card>
     </div>
+
+    <FokusWeek data={data} update={update} prodWeekSecs={uniWk+sideWk} prodTodaySecs={prodTodaySecs}/>
 
     <WeekGraph data={data} update={update} activeProject={activeProject} runningSecs={runningSecs}/>
 
